@@ -25,10 +25,21 @@ import pytesseract
 from math import floor, ceil
 import json
 import sys
+import argparse
 
 ## local
 from renautils import show
 from homofiltrer import homofiltrer
+
+parser = argparse.ArgumentParser(description='Parse image path')
+parser.add_argument('image_path')
+parser.add_argument('--show', action='store_true')
+try:
+    args = parser.parse_args()
+    image_path = args.image_path
+except:
+    print("error reading image_path argument")
+    image_path = 'samples/ticket5.jpg'
 
 
 def rotate(p, origin=(0, 0), degrees=0):
@@ -57,7 +68,7 @@ def plotOCR(ocr_data):
 plt.close('all')
 plt.rcParams['image.cmap'] = 'gray'
 
-ticket = skio.imread('ticket5.jpg', as_gray=True)
+ticket = skio.imread(image_path, as_gray=True)
 #if ticket.shape[1]>1024 : ticket = skt.rescale(ticket, 1024/ticket.shape[1], preserve_range=True)
 
 ## Canny
@@ -68,10 +79,17 @@ hspace, angles, distances = skt.hough_line(ticket_contours)
 hspacep, angles, distances = skt.hough_line_peaks(hspace, angles, distances)
 
 ## Rotation
-# on ne prend que le premier pic qui correspond à un bord vertical du ticket
+angles_candidats = []
+distances_candidats = []
+for i, angle in enumerate(angles):  # filtrage des angles
+    if abs(angle) < np.deg2rad(20): 
+        angles_candidats.append(angle) # ils sont dans l'ordre
+        distances_candidats.append(distances[i])
+
 # pour chaque angle, on détermine le multiple de pi/2 auquel il est le plus proche et son écart à ce dernier
-k = np.round(angles[0]/(np.pi/2))
-ecart = k*np.pi/2 - angles[0]
+angle = np.mean(angles_candidats[:2])
+k = np.round(angle/(np.pi/2))
+ecart = k*np.pi/2 - angle
 phi = -ecart # angle à appliquer à l'image
 
 ticket_rot = skt.rotate(ticket, phi*180/np.pi)
@@ -79,7 +97,7 @@ ticket_rot = skt.rotate(ticket, phi*180/np.pi)
 ## Recadrage bords verticaux
 center = (ticket.shape[1] / 2 - 0.5, ticket.shape[0] / 2 - 0.5)
 Xbords = []
-for angle, dist in zip(angles[:2], distances[:2]):
+for angle, dist in zip(angles_candidats[:2], distances_candidats[:2]):
     (x0, y0) = dist * np.array([np.cos(angle), np.sin(angle)])
     (x1, y1) = rotate((x0,y0), origin=center, degrees=-phi*180/np.pi)
     Xbords.append(x1)
@@ -206,8 +224,12 @@ ticket_ocr = img_as_ubyte(skf.gaussian(img_as_float(ticket_ocr), sigma=best_sigm
     
 ocr_data = pytesseract.image_to_data(ticket_ocr, output_type=pytesseract.Output.DICT)
 
-plt.figure()
-plotOCR(ocr_data)
+if args.show == True:
+    plt.figure()
+    plt.subplot(1,2,1)
+    plt.imshow(ticket_ocr)
+    plt.subplot(1,2,2)
+    plotOCR(ocr_data)
 
 def sanitizePrice(text):
     # version gentille pour le moment
