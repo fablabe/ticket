@@ -6,37 +6,33 @@ Created on Sun May 16 19:00:34 2021
 """
 
 import numpy as np
+
 import scipy.signal as spsig
-import scipy.ndimage as spnd
-import skimage.io as skio
+import scipy.optimize as spopt
+
 import matplotlib.pyplot as plt
-from renautils import show
-#from skimage.filters import try_all_threshold, threshold_minimum, sobel
+
+import skimage.io as skio
 import skimage.filters as skf
 import skimage.transform as skt
 from skimage import morphology as morpho
-from matplotlib.cm import get_cmap
-from math import floor, ceil
-
 import skimage.exposure as ske
-#from skimage.measure import label, regionprops
-import skimage.measure as skm
-import skimage.color as skc
 from skimage.util import img_as_ubyte, img_as_float
+from skimage.feature import canny
 
 import pytesseract
-from PIL import Image
 
-from homofiltrer import homofiltrer
-
+from math import floor, ceil
 import json
 import sys
 
-import scipy.optimize as spopt
+## local
+from renautils import show
+from homofiltrer import homofiltrer
 
-from skimage.feature import canny
 
 def rotate(p, origin=(0, 0), degrees=0):
+    ''' returns the rotated point p around origin '''
     angle = np.deg2rad(degrees)
     R = np.array([[np.cos(angle), -np.sin(angle)],
                   [np.sin(angle),  np.cos(angle)]])
@@ -45,6 +41,7 @@ def rotate(p, origin=(0, 0), degrees=0):
     return np.squeeze((R @ (p.T-o.T) + o.T).T)
 
 def plotOCR(ocr_data):
+    ''' plot ocr text in current figure '''
     n = len(ocr_data['text'])
     for i in range(n):
         text = ocr_data['text'][i]
@@ -60,7 +57,7 @@ def plotOCR(ocr_data):
 plt.close('all')
 plt.rcParams['image.cmap'] = 'gray'
 
-ticket = skio.imread('ticket5rescale.jpg', as_gray=True)
+ticket = skio.imread('ticket5.jpg', as_gray=True)
 #if ticket.shape[1]>1024 : ticket = skt.rescale(ticket, 1024/ticket.shape[1], preserve_range=True)
 
 ## Canny
@@ -71,7 +68,7 @@ hspace, angles, distances = skt.hough_line(ticket_contours)
 hspacep, angles, distances = skt.hough_line_peaks(hspace, angles, distances)
 
 ## Rotation
-# on ne prend que les deux premiers pics (bords verticaux du ticket)
+# on ne prend que le premier pic qui correspond à un bord vertical du ticket
 # pour chaque angle, on détermine le multiple de pi/2 auquel il est le plus proche et son écart à ce dernier
 k = np.round(angles[0]/(np.pi/2))
 ecart = k*np.pi/2 - angles[0]
@@ -89,7 +86,6 @@ for angle, dist in zip(angles[:2], distances[:2]):
 Xbords = np.round(sorted(Xbords)).astype(int)
 ticket_rot_crop = ticket_rot[:,Xbords[0]:Xbords[1]]
 
-# contrôle crop et rot bords verticaux
 # show(ticket, ticket_contours, ticket_rot, ticket_rot_crop, nrows=1)
 
 ## Recadrage bords horizontaux
@@ -252,7 +248,7 @@ def sanitizePrice(text):
 
 if True:
     ticket_dict = {}
-    
+    ticket_dict['score'] = best_conf
     ticket_dict['articles'] = []
     
     row_total = ticket_ocr.shape[0]
