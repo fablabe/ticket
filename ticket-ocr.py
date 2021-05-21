@@ -34,6 +34,7 @@ from homofiltrer import homofiltrer
 parser = argparse.ArgumentParser(description='Parse image path')
 parser.add_argument('image_path')
 parser.add_argument('--show', action='store_true')
+parser.add_argument('--downscale', action='store_true')
 try:
     args = parser.parse_args()
     image_path = args.image_path
@@ -69,7 +70,7 @@ plt.close('all')
 plt.rcParams['image.cmap'] = 'gray'
 
 ticket = skio.imread(image_path, as_gray=True)
-#if ticket.shape[1]>1024 : ticket = skt.rescale(ticket, 1024/ticket.shape[1], preserve_range=True)
+if args.downscale : ticket = skt.rescale(ticket, 1024/ticket.shape[1], preserve_range=True)
 
 ## Canny
 ticket_contours = canny(ticket)
@@ -243,7 +244,7 @@ def sanitizePrice(text):
             nbrs_str += c
         if c in ('o','O','g'):
             nbrs_str += '0'
-        if c in ['l']:
+        if c in ['l','i','I']:
             nbrs_str += '1'
         if c in ('S'):
             nbrs_str += '5'
@@ -268,46 +269,48 @@ def sanitizePrice(text):
 #         heights.append(rows[i]-rows[i-1])
 #     return np.quantile(heights, 0.2)
 
-if True:
-    ticket_dict = {}
-    ticket_dict['score'] = best_conf
-    ticket_dict['articles'] = []
+ticket_dict = {}
+ticket_dict['score'] = best_conf
+ticket_dict['articles'] = []
+
+row_total = ticket_ocr.shape[0]
+for i in range(len(ocr_data['text'])):
+    if ocr_data['text'][i].upper().find("TOTAL") >= 0: 
+        row_total = ocr_data['top'][i]
+        break
     
-    row_total = ticket_ocr.shape[0]
-    for i in range(len(ocr_data['text'])):
-        if ocr_data['text'][i].upper().find("TOTAL") >= 0: 
-            row_total = ocr_data['top'][i]
-            break
         
-            
+
+for i in range(len(ocr_data['text'])):
     
-    for i in range(len(ocr_data['text'])):
+    row, col, text, width, height = ocr_data['top'][i], ocr_data['left'][i], ocr_data['text'][i], ocr_data['width'][i], ocr_data['height'][i]
+    
+    if text not in ("", " ") :
         
-        row, col, text, width, height = ocr_data['top'][i], ocr_data['left'][i], ocr_data['text'][i], ocr_data['width'][i], ocr_data['height'][i]
-        
-        if text not in ("", " ") :
+        if 0.68 < col/ticket_ocr.shape[1] < 0.95 and row < row_total + height/2:
             
-            if 0.68 < col/ticket_ocr.shape[1] < 0.95 and row < row_total + height/2:
+            if abs(row-row_total)>=height/2 :  # si c'est un article
+                nomArticle = ""
                 
-                if abs(row-row_total)>=height/2 :  # si c'est un article
-                    nomArticle = ""
+                for j in range(len(ocr_data['text'])):
                     
-                    for j in range(len(ocr_data['text'])):
-                        
-                        row_, col_, text_ = ocr_data['top'][j], ocr_data['left'][j], ocr_data['text'][j]
-                        
-                        if col_ < 0.68*ticket_ocr.shape[1] :
-                            if abs(row_-row) < height/2 and text_ not in ("", " "):
-                                nomArticle += text_ + " "
-                                
-                    ticket_dict['articles'].append({'name': nomArticle,
-                                                    'price_str': text,
-                                                    'price': sanitizePrice(text)
-                                                   })
-                else :
-                    ticket_dict['total'] = sanitizePrice(text)
-                        
-    
-    #print(ticket_dict)
-    
-    print(json.dumps(ticket_dict, sort_keys=True, indent=4))
+                    row_, col_, text_ = ocr_data['top'][j], ocr_data['left'][j], ocr_data['text'][j]
+                    
+                    if col_ < 0.68*ticket_ocr.shape[1] :
+                        if abs(row_-row) < height/2 and text_ not in ("", " "):
+                            nomArticle += text_ + " "
+                            
+                ticket_dict['articles'].append({'name': nomArticle,
+                                                'price_str': text,
+                                                'price': sanitizePrice(text)
+                                               })
+            else :
+                ticket_dict['total'] = sanitizePrice(text)
+                    
+
+#print(ticket_dict)
+
+print(json.dumps(ticket_dict, sort_keys=True, indent=4))
+
+if args.show == True:
+    plt.show()
