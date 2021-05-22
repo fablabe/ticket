@@ -72,7 +72,6 @@ def find_half_hist(img):
         i+=1
     return i
     
-plt.ion()
 plt.close('all')
 plt.rcParams['image.cmap'] = 'gray'
 
@@ -244,14 +243,15 @@ print("finding best gamma")
 res = spopt.minimize_scalar(lambda x: -_OCR_score(ticket_ocr_hom, 0, half_hist/255, x, 0, order='levels-first', expected_words=['total','auchan','supermarche', 'stalingrad']), bounds=(0.01,9.99), method='bounded', options={'disp':3, 'xatol':0.1})
 gamma, conf = res.x, -res.fun
 
-best_sigma, best_conf = 0, 0
-for sigma in [0.2, 0.3, 0.4, 0.5]:
-    print("finding best sigma, currently: sigma=",sigma,sep="",end="")
-    conf = _OCR_score(ticket_ocr_hom, 0, half_hist/255, gamma, sigma, order='levels-first', expected_words=['total','auchan','supermarche', 'stalingrad'])
-    print("\tconf=",conf,sep="")
-    if conf < best_conf : break
-    elif conf == best_conf: continue
-    elif conf > best_conf : best_sigma, best_conf = sigma, conf
+best_sigma, best_conf = 0, conf
+if False: # opti sigma désactivée
+    for sigma in [0.2, 0.3, 0.4, 0.5]:
+        print("finding best sigma, currently: sigma=",sigma,sep="",end="")
+        conf = _OCR_score(ticket_ocr_hom, 0, half_hist/255, gamma, sigma, order='levels-first', expected_words=['total','auchan','supermarche', 'stalingrad'])
+        print("\tconf=",conf,sep="")
+        if conf < best_conf : break
+        elif conf == best_conf: continue
+        elif conf > best_conf : best_sigma, best_conf = sigma, conf
 
 best_gamma = gamma
 
