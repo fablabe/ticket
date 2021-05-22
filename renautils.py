@@ -47,6 +47,7 @@ def show(*args, nrows='auto', ncols='auto', title=None):
         
         else :
             plt.subplot(nrows, ncols, i)
+            print(type(arg))
             plt.imshow(arg)
             i+=1
     

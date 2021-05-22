@@ -29,12 +29,13 @@ import argparse
 
 ## local
 from renautils import show
-from homofiltrer import homofiltrer
+from homomorphic_filtering import homomorphic_filtering
 
 parser = argparse.ArgumentParser(description='Parse image path')
 parser.add_argument('image_path')
 parser.add_argument('--show', action='store_true')
 parser.add_argument('--downscale', action='store_true')
+parser.add_argument('--debug', action='store_true')
 try:
     args = parser.parse_args()
     image_path = args.image_path
@@ -73,7 +74,7 @@ ticket = skio.imread(image_path, as_gray=True)
 if args.downscale : ticket = skt.rescale(ticket, 1024/ticket.shape[1], preserve_range=True)
 
 ## Canny
-ticket_contours = canny(ticket)
+ticket_contours = canny(ticket, sigma=3)
 
 ## Transfo de Hough
 hspace, angles, distances = skt.hough_line(ticket_contours)
@@ -105,7 +106,7 @@ for angle, dist in zip(angles_candidats[:2], distances_candidats[:2]):
 Xbords = np.round(sorted(Xbords)).astype(int)
 ticket_rot_crop = ticket_rot[:,Xbords[0]:Xbords[1]]
 
-# show(ticket, ticket_contours, ticket_rot, ticket_rot_crop, nrows=1)
+if args.debug : show(ticket, ticket_contours, ticket_rot, ticket_rot_crop, nrows=1)
 
 ## Recadrage bords horizontaux
 ticket2 = ticket_rot_crop[:,:]
@@ -122,33 +123,54 @@ for u in range(ticket2.shape[0]):
     
 peaks, _ = spsig.find_peaks(profil, height=0.6*np.max(profil), prominence=0.4*np.mean(profil), distance=7)
 
+if args.debug:
+    plt.figure()
+    plt.plot(profil)
+    plt.scatter(peaks, profil[peaks])
+    plt.show()
+
 # on prendre le deuxième pic en partant de la gauche, et le deuxième en partant de la droite
 peaks = [x for x in peaks if 2*HAUTEUR_BLOC<=x<=len(profil)-2*HAUTEUR_BLOC]
-ticket2_crop = ticket2[peaks[0]:peaks[-1], :]
+if args.debug : print("Peaks:\n",peaks)
+
+#### au cas où on n'aurait pas comme prévu un pic au début et un pic à la fin (par ex quand la photo coupe le ticket)
+a = 0
+b = ticket2.shape[0]
+if peaks[0] < ticket2.shape[0]/2:
+    a = peaks[0]
+if peaks[-1] > ticket2.shape[0]/2:
+    b = peaks[-1]
+####
+
+ticket2_crop = ticket2[a:b, :]
 
 
 ### OCR
-ticket_ocr = img_as_ubyte(ticket2_crop)
 
-ticket_ocr_hom = homofiltrer(ticket_ocr, fc=0.02)
-ticket_ocr_hom = img_as_ubyte(ticket_ocr_hom)
+## filtrage homomorphique
+# il faut d'abord clipper sinon ça fait n'imp
+ticket_avant_filtrage = np.clip(ticket2_crop, np.quantile(ticket2_crop, 0.05), np.quantile(ticket2_crop, 0.95))
+fc = 60 * (ticket2_crop.shape[1]/1500) / ticket2_crop.shape[0]
+ticket_ocr_hom = homomorphic_filtering(img_as_float(ticket_avant_filtrage), fc=fc)
 
-ticket_ocr = ticket_ocr_hom
+if args.debug : show(ticket_ocr_hom, title='filtrage homomorphique')
+
+ticket_ocr = img_as_ubyte(ticket_ocr_hom)
+
+if args.debug: show(ticket2_crop, ticket_ocr, title="avant début optimisation")
 
 def levels(img, a, b, gamma):
-    img = np.copy(img)
-    img[img > b] = b
-    img[img < a] = a
-    img = img_as_float(img)
-    af, bf = a/255, b/255
-    img = (img-af)/(bf-af) # niveau
+    assert 0<=a<b<=1
+    img = img_as_float(img, True)
+    img = np.clip(img, a, b)
+    img = (img-a)/(b-a) # niveau
     img = ske.adjust_gamma(img, gamma)
     return img_as_ubyte(img)
 
 def _OCR_score(img, a, b, gamma, sigma, order='blur-first', expected_words=['total']):
     ''' order: 'blur-first', 'levels-first' '''
     assert ticket_ocr.dtype == np.uint8
-    assert 0<=a<b<=255
+    assert 0<=a<b<=1
     assert sigma>=0
     if order=='blur-first':
         img = img_as_ubyte(skf.gaussian(img_as_float(img), sigma=sigma)) 
@@ -181,7 +203,7 @@ def _OCR_score(img, a, b, gamma, sigma, order='blur-first', expected_words=['tot
     return score
 
 def find_half_hist(img):
-    hist = ske.histogram(img)[0]
+    hist = ske.histogram(img, nbins=256)[0]
     i, s = 0, 0
     while (s < img.shape[0]*img.shape[1]/2):
         s += hist[i]
@@ -206,13 +228,13 @@ half_hist = find_half_hist(ticket_ocr_hom)
 
 ## opti gamma puis sigma
 print("finding best gamma")
-res = spopt.minimize_scalar(lambda x: -_OCR_score(ticket_ocr_hom, 0, half_hist, x, 0, order='levels-first', expected_words=['total','auchan','supermarche', 'stalingrad']), bounds=(0.01,9.99), method='bounded', options={'disp':3, 'xatol':0.1})
+res = spopt.minimize_scalar(lambda x: -_OCR_score(ticket_ocr_hom, 0, half_hist/255, x, 0, order='levels-first', expected_words=['total','auchan','supermarche', 'stalingrad']), bounds=(0.01,9.99), method='bounded', options={'disp':3, 'xatol':0.1})
 gamma, conf = res.x, -res.fun
 
 best_sigma, best_conf = 0, 0
 for sigma in [0.2, 0.3, 0.4, 0.5]:
     print("finding best sigma, currently: sigma=",sigma,sep="",end="")
-    conf = _OCR_score(ticket_ocr_hom, 0, half_hist, gamma, sigma, order='levels-first', expected_words=['total','auchan','supermarche', 'stalingrad'])
+    conf = _OCR_score(ticket_ocr_hom, 0, half_hist/255, gamma, sigma, order='levels-first', expected_words=['total','auchan','supermarche', 'stalingrad'])
     print("\tconf=",conf,sep="")
     if conf < best_conf : break
     elif conf == best_conf: continue
@@ -220,7 +242,7 @@ for sigma in [0.2, 0.3, 0.4, 0.5]:
 
 best_gamma = gamma
 
-ticket_ocr = levels(ticket_ocr_hom, 0, half_hist, best_gamma)
+ticket_ocr = levels(ticket_ocr_hom, 0, half_hist/255, best_gamma)
 ticket_ocr = img_as_ubyte(skf.gaussian(img_as_float(ticket_ocr), sigma=best_sigma)) 
     
 ocr_data = pytesseract.image_to_data(ticket_ocr, output_type=pytesseract.Output.DICT)
