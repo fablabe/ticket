@@ -11,6 +11,7 @@ import scipy.signal as spsig
 import scipy.optimize as spopt
 
 import matplotlib.pyplot as plt
+from matplotlib.cm import get_cmap
 
 import skimage.io as skio
 import skimage.filters as skf
@@ -36,12 +37,9 @@ parser.add_argument('image_path')
 parser.add_argument('--show', action='store_true')
 parser.add_argument('--downscale', action='store_true')
 parser.add_argument('--debug', action='store_true')
-try:
-    args = parser.parse_args()
-    image_path = args.image_path
-except:
-    print("error reading image_path argument")
-    image_path = 'samples/ticket5.jpg'
+
+args = parser.parse_args()
+image_path = args.image_path
 
 
 def rotate(p, origin=(0, 0), degrees=0):
@@ -66,7 +64,15 @@ def plotOCR(ocr_data):
     plt.xlim((0, ticket_ocr.shape[1]))
     plt.ylim((0, ticket_ocr.shape[0]))
     
-
+def find_half_hist(img):
+    hist = ske.histogram(img, nbins=256)[0]
+    i, s = 0, 0
+    while (s < img.shape[0]*img.shape[1]/2):
+        s += hist[i]
+        i+=1
+    return i
+    
+plt.ion()
 plt.close('all')
 plt.rcParams['image.cmap'] = 'gray'
 
@@ -74,19 +80,28 @@ ticket = skio.imread(image_path, as_gray=True)
 if args.downscale : ticket = skt.rescale(ticket, 1024/ticket.shape[1], preserve_range=True)
 
 ## Canny
-ticket_contours = canny(ticket, sigma=3)
+ticket_contours = canny(ticket, sigma=2 * (ticket.shape[0]*ticket.shape[1])**.5/1500)
+ticket_contours = morpho.dilation(ticket_contours, morpho.disk(3))
 
 ## Transfo de Hough
 hspace, angles, distances = skt.hough_line(ticket_contours)
 hspacep, angles, distances = skt.hough_line_peaks(hspace, angles, distances)
+normalized_hspacep = (hspacep - np.min(hspacep)) / (np.max(hspacep) - np.min(hspacep))
 
 ## Rotation
 angles_candidats = []
 distances_candidats = []
 for i, angle in enumerate(angles):  # filtrage des angles
-    if abs(angle) < np.deg2rad(20): 
+    if abs(angle) < np.deg2rad(30): 
         angles_candidats.append(angle) # ils sont dans l'ordre
         distances_candidats.append(distances[i])
+        
+if args.debug:
+    show(ticket)
+    cmap = get_cmap('Wistia')
+    for p, angle, dist in zip(normalized_hspacep, angles, distances):
+        (x0, y0) = dist * np.array([np.cos(angle), np.sin(angle)])
+        plt.axline((x0, y0), slope=np.tan(angle + np.pi/2), c=cmap(p))
 
 # pour chaque angle, on détermine le multiple de pi/2 auquel il est le plus proche et son écart à ce dernier
 angle = np.mean(angles_candidats[:2])
@@ -104,7 +119,11 @@ for angle, dist in zip(angles_candidats[:2], distances_candidats[:2]):
     (x1, y1) = rotate((x0,y0), origin=center, degrees=-phi*180/np.pi)
     Xbords.append(x1)
 Xbords = np.round(sorted(Xbords)).astype(int)
-ticket_rot_crop = ticket_rot[:,Xbords[0]:Xbords[1]]
+if len(Xbords)>=2:
+    ticket_rot_crop = ticket_rot[:,Xbords[0]:Xbords[1]]
+else:
+    print("WARNING: couldn't crop")
+    ticket_rot_crop = ticket_rot
 
 if args.debug : show(ticket, ticket_contours, ticket_rot, ticket_rot_crop, nrows=1)
 
@@ -119,7 +138,7 @@ profil = np.zeros(ticket2.shape[0])
 for u in range(ticket2.shape[0]):
     a = max(u - floor(HAUTEUR_BLOC/2), 0)
     b = min(u + ceil(HAUTEUR_BLOC/2), ticket2.shape[0])
-    profil[u] = np.sum(ticket2_contours[u-HAUTEUR_BLOC//2:u+HAUTEUR_BLOC//2])
+    profil[u] = np.sum(ticket2_contours[a:b])
     
 peaks, _ = spsig.find_peaks(profil, height=0.6*np.max(profil), prominence=0.4*np.mean(profil), distance=7)
 
@@ -130,28 +149,30 @@ if args.debug:
     plt.show()
 
 # on prendre le deuxième pic en partant de la gauche, et le deuxième en partant de la droite
-peaks = [x for x in peaks if 2*HAUTEUR_BLOC<=x<=len(profil)-2*HAUTEUR_BLOC]
+peaks = [x for x in peaks if HAUTEUR_BLOC<=x<=len(profil)-HAUTEUR_BLOC]
 if args.debug : print("Peaks:\n",peaks)
 
 #### au cas où on n'aurait pas comme prévu un pic au début et un pic à la fin (par ex quand la photo coupe le ticket)
 a = 0
 b = ticket2.shape[0]
-if peaks[0] < ticket2.shape[0]/2:
-    a = peaks[0]
-if peaks[-1] > ticket2.shape[0]/2:
-    b = peaks[-1]
+if len(peaks)>0:
+    if peaks[0] < ticket2.shape[0]*1/3:
+        a = peaks[0]
+    if peaks[-1] > ticket2.shape[0]*2/3:
+        b = peaks[-1]
 ####
 
 ticket2_crop = ticket2[a:b, :]
 
+if args.debug : show(ticket2_crop, 'fin crop')
 
 ### OCR
 
 ## filtrage homomorphique
-# il faut d'abord clipper sinon ça fait n'imp
-ticket_avant_filtrage = np.clip(ticket2_crop, np.quantile(ticket2_crop, 0.05), np.quantile(ticket2_crop, 0.95))
+ticket_avant_filtrage = img_as_float(ticket2_crop, True)
+#ticket_avant_filtrage[ticket2_crop < np.quantile(ticket2_crop,0.05)] = find_half_hist(ticket2_crop)/255
 fc = 60 * (ticket2_crop.shape[1]/1500) / ticket2_crop.shape[0]
-ticket_ocr_hom = homomorphic_filtering(img_as_float(ticket_avant_filtrage), fc=fc)
+ticket_ocr_hom = homomorphic_filtering(ticket_avant_filtrage, fc=fc)
 
 if args.debug : show(ticket_ocr_hom, title='filtrage homomorphique')
 
@@ -201,14 +222,6 @@ def _OCR_score(img, a, b, gamma, sigma, order='blur-first', expected_words=['tot
     
     
     return score
-
-def find_half_hist(img):
-    hist = ske.histogram(img, nbins=256)[0]
-    i, s = 0, 0
-    while (s < img.shape[0]*img.shape[1]/2):
-        s += hist[i]
-        i+=1
-    return i
 
 
 

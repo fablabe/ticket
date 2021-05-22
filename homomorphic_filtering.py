@@ -18,7 +18,7 @@ def ButterworthHP(shape, fc, order=1):
     H = np.fft.ifftshift(H)
     return H
 
-def homomorphic_filtering(img, fc, order=3):
+def homomorphic_filtering(img, fc, order=3, clip=True):
     
     img_log = np.log(img + 1e-24)
     img_log_fft = np.fft.fft2(img_log)
@@ -26,5 +26,6 @@ def homomorphic_filtering(img, fc, order=3):
     prod = H*img_log_fft
     img_log_filtered = np.real(np.fft.ifft2(prod))
     img_filtered = np.exp(img_log_filtered)
+    if clip : img_filtered = np.clip(img_filtered, np.quantile(img_filtered,0.05), np.quantile(img_filtered,0.95))
     _m, _M = np.min(img_filtered), np.max(img_filtered)
     return (img_filtered - _m) / (_M - _m) if _m!=_M else np.zeros(img.shape, dtype=img.dtype)
